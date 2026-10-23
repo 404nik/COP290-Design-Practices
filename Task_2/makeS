@@ -1,19 +1,30 @@
-#OBJS specifies which files to compile as part of the project
-OBJS = game_server.cpp
+# OBJS specifies which files to compile as part of the server project
+OBJS = game_server.cpp health_server.cpp
+TEST_OBJS = health_server.cpp health_server_test.cpp
 
-#CC specifies which compiler we're using
+# CC specifies which compiler we're using
 CC = g++
 
-#COMPILER_FLAGS specifies the additional compilation options we're using
+# COMPILER_FLAGS specifies the additional compilation options we're using
 # -w suppresses all warnings
-COMPILER_FLAGS = -w
+COMPILER_FLAGS = -w -std=c++11 -pthread
 
-#LINKER_FLAGS specifies the libraries we're linking against
-LINKER_FLAGS = -lSDL2 -lSDL2_image -lSDL2_mixer
+# LINKER_FLAGS specifies the libraries we're linking against
+LINKER_FLAGS = -lSDL2 -lSDL2_image -lSDL2_mixer -pthread
 
-#OBJ_NAME specifies the name of our exectuable
+# OBJ_NAME specifies the name of our executable
 OBJ_NAME = playS
+TEST_NAME = health_server_test
 
-#This is the target that compiles our executable
+# This is the target that compiles our executable
 all : $(OBJS)
 	$(CC) $(OBJS) $(COMPILER_FLAGS) $(LINKER_FLAGS) -o $(OBJ_NAME)
+
+$(TEST_NAME) : $(TEST_OBJS)
+	$(CC) $(TEST_OBJS) $(COMPILER_FLAGS) -o $(TEST_NAME)
+
+test : $(TEST_NAME)
+	./$(TEST_NAME)
+
+clean :
+	rm -f $(OBJ_NAME) $(TEST_NAME)
