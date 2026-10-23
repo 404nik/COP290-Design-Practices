@@ -22,6 +22,8 @@ std::string reasonPhrase(int status_code)
     {
     case 200:
         return "OK";
+    case 400:
+        return "Bad Request";
     case 404:
         return "Not Found";
     case 405:
@@ -74,7 +76,7 @@ bool readRequestLine(int fd, std::string& line)
         ssize_t n = recv(fd, &ch, 1, 0);
         if (n == 0)
         {
-            return !line.empty();
+            return false;
         }
         if (n < 0)
         {
@@ -89,12 +91,13 @@ bool readRequestLine(int fd, std::string& line)
             if (!line.empty() && line[line.size() - 1] == '\r')
             {
                 line.erase(line.size() - 1);
+                return true;
             }
-            return true;
+            return false;
         }
         line.push_back(ch);
     }
-    return true;
+    return false;
 }
 }
 
@@ -268,6 +271,7 @@ void HealthServer::handleClient(int client_fd)
     std::string request_line;
     if (!readRequestLine(client_fd, request_line))
     {
+        sendAll(client_fd, buildResponse(400, "{\"status\":\"bad_request\"}"));
         return;
     }
 
@@ -275,12 +279,18 @@ void HealthServer::handleClient(int client_fd)
     std::string method;
     std::string path;
     std::string version;
+    std::string extra;
     parser >> method >> path >> version;
 
     int status_code = 404;
     std::string body = "{\"status\":\"not_found\"}";
 
-    if (method != "GET")
+    if (!parser || (parser >> extra) || (version != "HTTP/1.0" && version != "HTTP/1.1"))
+    {
+        status_code = 400;
+        body = "{\"status\":\"bad_request\"}";
+    }
+    else if (method != "GET")
     {
         status_code = 405;
         body = "{\"status\":\"method_not_allowed\"}";

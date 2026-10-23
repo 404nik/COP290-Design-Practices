@@ -66,6 +66,7 @@ HttpResponse request(uint16_t port, const std::string& request_text)
         data += sent;
         remaining -= static_cast<size_t>(sent);
     }
+    ::shutdown(fd, SHUT_WR);
 
     std::string raw;
     char buffer[256];
@@ -183,6 +184,34 @@ void testLiveAndReadyContract()
     require(!server.isReady(), "server still marked ready after stop");
 }
 
+void testMalformedRequestLines()
+{
+    HealthServer server;
+    std::string error;
+    require(server.start(0, &error), "server failed to start: " + error);
+    uint16_t port = server.port();
+
+    expectResponse(request(port, "GET /health/live"),
+                   "HTTP/1.1 400 Bad Request",
+                   "{\"status\":\"bad_request\"}");
+
+    std::string overlong_prefix = "GET /health/live HTTP/1.1";
+    std::string overlong = overlong_prefix + std::string(4096 - overlong_prefix.size(), 'x');
+    expectResponse(request(port, overlong),
+                   "HTTP/1.1 400 Bad Request",
+                   "{\"status\":\"bad_request\"}");
+
+    expectResponse(request(port, "GET /health/live HTTP/2.0\r\nHost: 127.0.0.1\r\n\r\n"),
+                   "HTTP/1.1 400 Bad Request",
+                   "{\"status\":\"bad_request\"}");
+
+    expectResponse(request(port, "GET /health/live HTTP/1.1 extra\r\nHost: 127.0.0.1\r\n\r\n"),
+                   "HTTP/1.1 400 Bad Request",
+                   "{\"status\":\"bad_request\"}");
+
+    server.stop();
+}
+
 void testRestart()
 {
     HealthServer server;
@@ -209,6 +238,7 @@ int main()
     try
     {
         testLiveAndReadyContract();
+        testMalformedRequestLines();
         testRestart();
     }
     catch (const std::exception& ex)
