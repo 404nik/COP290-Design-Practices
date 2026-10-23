@@ -7,11 +7,46 @@
    ```sh
    make -f makeS
    ```
-2. Run the server:
+2. Run the server with the default health port (`8080`):
    ```sh
    ./playS 51717
    ```
+   Or choose an explicit health port for monitoring/tests:
+   ```sh
+   ./playS 51717 18080
+   ```
 3. Press `Enter`.
+
+The first argument is always the game port used by `playC`. The optional second argument is a separate unauthenticated HTTP health port; keep it different from the game port.
+
+### Health probes
+
+`playS` runs a small HTTP health listener on loopback (`127.0.0.1`) independently of the game socket.
+
+```sh
+curl -i http://127.0.0.1:8080/health/live
+curl -i http://127.0.0.1:8080/health/ready
+```
+
+Response contract:
+
+| Route | When | Status | Body |
+| --- | --- | --- | --- |
+| `GET /health/live` | Health listener can serve HTTP | `200 OK` | `{"status":"ok"}` |
+| `GET /health/ready` | Game socket is not listening yet or server is shutting down | `503 Service Unavailable` | `{"status":"not_ready"}` |
+| `GET /health/ready` | SDL/resources initialized and game socket `bind`/`listen` succeeded | `200 OK` | `{"status":"ready"}` |
+| Unsupported path | Any time | `404 Not Found` | `{"status":"not_found"}` |
+| Unsupported method | Any time | `405 Method Not Allowed` | `{"status":"method_not_allowed"}` |
+
+Every response uses `Content-Type: application/json`, an exact `Content-Length`, and `Connection: close`.
+
+Monitoring guidance:
+
+- Use `/health/live` for process-restart decisions only.
+- Use `/health/ready` for readiness or traffic-routing decisions because it turns `ready` only after the game socket is actually listening.
+- Alert on sustained failures instead of a single missed probe.
+- The health checks do not inspect player count, assets, audio devices, external files, or gameplay state.
+- Keep the health port separate from the game port and restrict access to trusted operators/monitoring systems because the endpoint is deliberately unauthenticated.
 
 ### Client
 1. Compile the client:

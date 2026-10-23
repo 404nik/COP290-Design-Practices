@@ -7,11 +7,17 @@ and may not be redistributed without written permission.*/
 #include <SDL2/SDL_mixer.h>
 #include <stdio.h>
 #include<bits/stdc++.h>
+#include <cerrno>
+#include <climits>
+#include <cstdlib>
 #include <string>
 #include<iostream>
 #include<sys/socket.h>
 #include<sys/types.h>
 #include<netinet/in.h>
+#include<unistd.h>
+
+#include "health_server.h"
 
 using namespace std;
 
@@ -1674,6 +1680,47 @@ SDL_Surface* loadSurface( std::string path )
 
 int main( int argc, char* args[] )
 {
+	if (argc < 2 || argc > 3)
+	{
+		cerr << "Usage: " << args[0] << " <game-port> [health-port]" << endl;
+		return 1;
+	}
+
+	char* endptr = NULL;
+	errno = 0;
+	long game_port = strtol(args[1], &endptr, 10);
+	if (errno != 0 || endptr == args[1] || *endptr != '\0' || game_port <= 0 || game_port > 65535)
+	{
+		cerr << "Invalid game port: " << args[1] << endl;
+		return 1;
+	}
+
+	long health_port = HealthServer::DEFAULT_PORT;
+	if (argc == 3)
+	{
+		errno = 0;
+		endptr = NULL;
+		health_port = strtol(args[2], &endptr, 10);
+		if (errno != 0 || endptr == args[2] || *endptr != '\0' || health_port < 0 || health_port > 65535)
+		{
+			cerr << "Invalid health port: " << args[2] << endl;
+			return 1;
+		}
+	}
+	if (game_port == health_port)
+	{
+		cerr << "Health port must be different from game port: " << health_port << endl;
+		return 1;
+	}
+
+	HealthServer healthServer;
+	string health_error;
+	if (!healthServer.start(static_cast<uint16_t>(health_port), &health_error))
+	{
+		cerr << "Failed to start health listener on port " << health_port << ": " << health_error << endl;
+		return 1;
+	}
+
 	//Start up SDL and create window
 	if( !init() )
 	{
@@ -1713,26 +1760,45 @@ int main( int argc, char* args[] )
     		socklen_t length_client;
     		struct sockaddr_in address_server, address_client;			
 				sockfd = socket(AF_INET, SOCK_STREAM, 0);
+				if (sockfd < 0)
+				{
+					perror("ERROR opening socket");
+					goto end;
+				}
 				int optval = 1 ;
 				if (setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&optval,sizeof(int)) == -1) {
 					perror("setsockopt") ;
-					exit(-1) ;
+					::close(sockfd);
+					goto end;
 				}
-				if (sockfd < 0) 
-					error("ERROR opening socket");
 				bzero((char *) &address_server, sizeof(address_server));
-				portno = atoi(args[1]);
+				portno = static_cast<int>(game_port);
 				address_server.sin_family = AF_INET;
 				address_server.sin_addr.s_addr = INADDR_ANY;
 				address_server.sin_port = htons(portno);
-				if (bind(sockfd, (struct sockaddr *) &address_server, sizeof(address_server)) < 0) 
-					error("ERROR on binding");
-				listen(sockfd,5);
+				if (bind(sockfd, (struct sockaddr *) &address_server, sizeof(address_server)) < 0)
+				{
+					perror("ERROR on binding");
+					::close(sockfd);
+					goto end;
+				}
+				if (listen(sockfd,5) < 0)
+				{
+					perror("ERROR on listen");
+					::close(sockfd);
+					goto end;
+				}
+				healthServer.setReady(true);
 				length_client = sizeof(address_client);
 				cout<<"Server accept"<<endl;
 				newsockfd = accept(sockfd, (struct sockaddr *) &address_client, &length_client);
 				if (newsockfd < 0) 
-					error("ERROR on accept");
+				{
+					perror("ERROR on accept");
+					healthServer.setReady(false);
+					::close(sockfd);
+					goto end;
+				}
 
 				
 			
@@ -1747,11 +1813,23 @@ int main( int argc, char* args[] )
 					mydot.mPosX = buffer[0];
 					mydot.mPosY = buffer[1];
 					if (n < 0) 
-					error("ERROR reading from socket");
+					{
+						perror("ERROR reading from socket");
+						healthServer.setReady(false);
+						::close(newsockfd);
+						::close(sockfd);
+						goto end;
+					}
 					buffer[1] = dot.mPosY;
 					n = write(newsockfd,buffer,8);
 					if (n < 0) 
-						error("ERROR writing to socket");
+					{
+						perror("ERROR writing to socket");
+						healthServer.setReady(false);
+						::close(newsockfd);
+						::close(sockfd);
+						goto end;
+					}
 				//Handle events on queue
 				while( SDL_PollEvent( &e ) != 0 )
 				{
@@ -1984,10 +2062,16 @@ int main( int argc, char* args[] )
 				//Update screen
 				SDL_RenderPresent( gRenderer );
 			}
+			healthServer.setReady(false);
+			::close(newsockfd);
+			::close(sockfd);
 		}
 	}
 
 	//Free resources and close SDL
-	end: close();
+	end:
+	healthServer.setReady(false);
+	healthServer.stop();
+	close();
 	return 0;
 }
